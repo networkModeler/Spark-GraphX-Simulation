@@ -20,18 +20,17 @@ import org.apache.spark.streaming._
 import org.apache.spark.graphx._
 import org.apache.spark.rdd.RDD
 import java.io._
-import java.nio.file._
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
-// Define a class for an ad
+// Define a class for an page
 case class Page(id: VertexId, tokens: List[String], var score: Int) extends java.io.Serializable
 {
   def similarity(ad: Ad) : Int =
   {
-    val commonList = this.tokens.intersect(ad.tokens)
-    val numCommon = commonList.length
-    return numCommon
+     val commonList = this.tokens.intersect(ad.tokens)
+     val numCommon = commonList.length
+     return numCommon
   }
 }
 
@@ -40,76 +39,104 @@ case class Page(id: VertexId, tokens: List[String], var score: Int) extends java
 // Define a class for an ad
 case class Ad(id: Long, tokens: List[String], var next: VertexId) extends java.io.Serializable
 {
+  val debug = true
+
   def similarity(page: Page) : Int =
   {
-    val commonList = this.tokens.intersect(page.tokens)
-    val numCommon = commonList.length
-    return numCommon
+     val commonList = this.tokens.intersect(page.tokens)
+     val numCommon = commonList.length
+     return numCommon
   }
 
-  def scorePages(pageList: List[Page]) =
+  def scorePages(pageList: List[Page], currentPage: VertexId) =
   {
-    // Score this page with each page in the given list
+    // Score this ad with each page in the given list
     pageList.foreach( page => page.score = page.similarity(this) )
 
     // Greedily select the page with the highest similarity score
     //this.next = pageList.maxBy(_.score).id
 
-    // Create a distribution normalized from 0 to 1
-    val sum = pageList.map(_.score + 1.0).sum
-    val distribution = pageList.map(page => (page.id, (page.score + 1.0) / sum)).toMap
-
     // Randomly select a page, weighted by their similarity scores
-    this.next = this.sample(distribution, pageList)
+    this.next = this.selectWeightedRandom(pageList, currentPage)
 
     // Statistics
-    //if (this.id == 440)
-    if (true)
+    if (debug)
     {
-      val filtered = pageList.filter(_.id == this.id)
+      val filtered = pageList.filter(_.id == this.next)
       if (filtered.length > 0)
       {
+        println("********** scorePages **********")
+        pageList.foreach(println)
+
         val page = filtered(0)
         val score = page.score
-        println("id " + this.id + " score " + score)
+        println("migrate ad " + this.id + " from page " + currentPage + " to page " + this.next + ", score " + score)
       }
     }
   }
 
-  def sample(distribution: Map[VertexId, Double], pageList: List[Page]): VertexId =
+  // Select a page, randomly in proportion to the page's score
+  def selectWeightedRandom(pageList: List[Page], currentPage: VertexId): VertexId = 
   {
-    var accumulator = 0.0
-    val randomNumber = scala.util.Random.nextDouble
-
-    val it = distribution.iterator
-    while (it.hasNext)
+    // Check if there are no neighboring vertices
+    if (pageList.length == 1)
     {
-      val (page, score) = it.next
-      accumulator += score
-      if (accumulator >= randomNumber)
+      return pageList(0).id
+    }
+
+    // Create a distribution normalized from 0 to 1
+    val sum = pageList.map(_.score + 1.0).sum	// + 1.0 because many scores will be zero
+    val distribution = pageList.map(page => (page.id, (page.score + 1.0) / sum)).toMap
+
+    // Try a few times in case it selects current page
+    var numTries = 10
+    var selectedPage = currentPage
+    while ((selectedPage == currentPage) && (numTries > 0))
+    {
+      numTries = numTries - 1
+
+      // Get a random number
+      val randomNumber = scala.util.Random.nextDouble
+
+      // See where the random number lands amongst the pages
+      var accumulator = 0.0
+      val it = distribution.iterator
+      while (it.hasNext) 
       {
-        return page
+        val (page, score) = it.next
+        accumulator += score
+        if (accumulator >= randomNumber)
+        {
+          selectedPage = page
+        }
+      }
+
+      // We land here if there are duplicates in the pageList
+      // Greedily select the page with the highest similarity score
+      if (selectedPage == currentPage)
+      {
+        selectedPage = pageList.maxBy(_.score).id
       }
     }
 
-    // Greedily select the page with the highest similarity score
-    return pageList.maxBy(_.score).id
+    return selectedPage
   }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
-// Define a class for graph vertex attributes
-case class VertexAttributes(var pages: List[Page], var ads: List[Ad], var step: Long) extends java.io.Serializable
+// Define a class for GraphX vertex attributes
+case class VertexAttributes(var pages: List[Page], var ads: List[Ad], var step: Long, inDegree: Int, outDegree: Int)
+  extends java.io.Serializable
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
-// Define a class for migration messages passed between vertices
+// Define a class for migration Pregel messages passed between vertices
 case class MigrateMessage(vertexId: VertexId, var ads: List[Ad]) extends java.io.Serializable
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
-// Define a class for replication messages passed between vertices
+// Define a class for replication Pregel messages passed between vertices
 case class ReplicateMessage(vertexId: VertexId, var pages: List[Page]) extends java.io.Serializable
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -120,84 +147,122 @@ class Butterflies() extends java.io.Serializable
   // A boolean flag to enable debug statements
   val debug = false
 
-  // Initialize a random number generator with a known seed for reproducibility
-  //val rng = new scala.util.Random(0)
+  // A boolean flag to read an edgelist file rather than compute the edges
+  val readEdgelistFile = false;
 
   // Create a graph from a page file and an ad file
-  def createGraph(): Graph[VertexAttributes, Int] =
+  def createGraph(): Graph[VertexAttributes, Int] = 
   {
     // Just needed for textFile() method to load an RDD from a textfile
     // Cannot use the global Spark context because SparkContext cannot be serialized from master to worker
     val sc = new SparkContext
 
     // Parse a text file with the vertex information
-    //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1000pages.txt")
-    val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/queryid_tokensid.txt")
-      //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/trivial_nodes.txt")
+    //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1Mnodes.txt")
+    val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1000pages.txt")
+    //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1Knodes.txt")
+    //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/queryid_tokensid.txt")
+    //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/trivial_nodes.txt")
       .map { l =>
-      val tokens = l.split("\\s+")     // split("\\s") will split on whitespace
-    val id = tokens(0).trim.toLong
-      val tokenList = tokens.last.split('|').toList
-      (id, tokenList)
-    }
+        val tokens = l.split("\\s+")     // split("\\s") will split on whitespace
+        val id = tokens(0).trim.toLong
+        val tokenList = tokens.last.split('|').toList
+        (id, tokenList)
+      }
     println("********** NUMBER OF PAGES: " + pages.count + " **********")
-
 
     // Parse a text file with the ad information
     //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1000ads.txt")
-    //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1000descriptions.txt")
+    val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1000descriptions.txt")
     //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/purchasedkeywordid_tokensid.txt")
-    val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/descriptionid_tokensid.txt")
-      //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/trivial_ads.txt")
+    //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/descriptionid_tokensid.txt")
+    //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/trivial_ads.txt")
       .map { l =>
-      val tokens = l.split("\\s+")     // split("\\s") will split on whitespace
-    val id = tokens(0).trim.toLong
-      val tokenList = tokens.last.split('|').toList
-      (id, tokenList)
-    }
+        val tokens = l.split("\\s+")     // split("\\s") will split on whitespace
+        val id = tokens(0).trim.toLong
+        val tokenList = tokens.last.split('|').toList
+        val next: VertexId = 0
+        val vertexId: VertexId = id % 1000
+        (vertexId, Ad(id, tokenList, next))
+      }
     println("********** NUMBER OF ADS: " + ads.count + " **********")
 
-    // Create the edges between similar pages
-    //   Create of list of all possible pairs of pages
-    //   Check if any pair shares at least one token
-    //   We only need the pair id's for the edgelist
-    val allPairs = pages.cartesian(pages).filter{ case (a, b) => a._1 < b._1 }
-    val similarPairs = allPairs.filter{ case (page1, page2) => page1._2.intersect(page2._2).length >= 1 }
-    val idOnly = similarPairs.map{ case (page1, page2) => Edge(page1._1, page2._1, 1)}
-    println("********** NUMBER OF EDGES: " + idOnly.count + " **********")
+    // Check if we should simply read an edgelist file, or compute the edges from scratch
+    val edgeGraph =
+    if (readEdgelistFile)
+    {
+      // Create a graph from an edgelist file
+      //GraphLoader.edgeListFile(sc, "hdfs://ip-172-31-4-59:9000/user/butterflies/data/1Medges.txt")
+      //GraphLoader.edgeListFile(sc, "hdfs://ip-172-31-4-59:9000/user/butterflies/data/1Kedges.txt")
+      GraphLoader.edgeListFile(sc, "hdfs://ip-172-31-4-59:9000/user/butterflies/data/1000_saved_edges.txt")
+    }
+    else
+    {
+      // Create the edges between similar pages
+      //   Create of list of all possible pairs of pages
+      //   Check if any pair shares at least one token
+      //   We only need the pair id's for the edgelist
+      val allPairs = pages.cartesian(pages).filter{ case (a, b) => a._1 < b._1 }
+      val similarPairs = allPairs.filter{ case (page1, page2) => page1._2.intersect(page2._2).length >= 1 }
+      val idOnly = similarPairs.map{ case (page1, page2) => Edge(page1._1, page2._1, 1)}
+      println("********** NUMBER OF EDGES: " + idOnly.count + " **********")
 
-    // Save the list of edges as a file, to be used instead of recomputing the edges every time
-    idOnly.saveAsTextFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/saved_edges")
+      // Save the list of edges as a file, to be used instead of recomputing the edges every time
+      //idOnly.saveAsTextFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/saved_edges")
 
-    // Create a graph from an edge list RDD
-    val edgeGraph = Graph.fromEdges[Int, Int](idOnly, 1);
+      // Create a graph from an edge list RDD
+      Graph.fromEdges[Int, Int](idOnly, 1);
+    }
 
     // Copy into a graph with nodes that have vertexAttributes
     val attributeGraph: Graph[VertexAttributes, Int] =
-      edgeGraph.mapVertices{ (id, v) => VertexAttributes(Nil, Nil, 0) }
+      edgeGraph.mapVertices{ (id, v) => VertexAttributes(Nil, Nil, 0, 0, 0) }
 
     // Add the node information into the graph
     val nodeGraph = attributeGraph.outerJoinVertices(pages) {
-      (vertexId, attr, pageTokenList) =>
-        VertexAttributes(List(Page(vertexId, pageTokenList.getOrElse(List.empty), 0)), attr.ads, attr.step)
+      (vertexId, attr, pageTokenList) => 
+        VertexAttributes(List(Page(vertexId, pageTokenList.getOrElse(List.empty), 0)), 
+                         attr.ads, attr.step, attr.inDegree, attr.outDegree)
+    }
+
+    // Add the node degree information into the graph
+    val degreeGraph = nodeGraph
+    .outerJoinVertices(nodeGraph.inDegrees) 
+    {
+      case (id, attr, inDegree) => VertexAttributes(attr.pages, attr.ads, attr.step, inDegree.getOrElse(0), attr.outDegree)
+    }
+    .outerJoinVertices(nodeGraph.outDegrees) 
+    {
+      case (id, attr, outDegree) => 
+        VertexAttributes(attr.pages, attr.ads, attr.step, attr.inDegree, outDegree.getOrElse(0))
     }
 
     // Add the ads to the nodes
-    val adGraph = nodeGraph.outerJoinVertices(ads) {
-      (vertexId, attr, adTokenList) =>
-        VertexAttributes(attr.pages, List(Ad(vertexId, adTokenList.getOrElse(List.empty), 0)), attr.step)
+    val adGraph = degreeGraph.outerJoinVertices(ads) 
+    {
+      (vertexId, attr, ad) => 
+      {
+        if (ad.isEmpty)
+        {
+          VertexAttributes(attr.pages, List.empty, attr.step, attr.inDegree, attr.outDegree)
+        }
+        else
+        {
+          VertexAttributes(attr.pages, List(Ad(ad.get.id, ad.get.tokens, ad.get.next)), attr.step, attr.inDegree, attr.outDegree)
+        }
+      }
     }
 
     // Display the graph for debug only
     if (debug)
     {
       println("********** GRAPH **********")
-      printVertices(adGraph)
+      //printVertices(adGraph)
     }
 
     // return the generated graph
-    return adGraph
-  }
+    return adGraph 
+  } 
 
   ////////////////////////////////////////////////////////////////////////////////////////////////
   // REPLICATION
@@ -233,21 +298,28 @@ class Butterflies() extends java.io.Serializable
 
     if (debug)
     {
-      println("********** replication vprog, node:" + id + ", step:" + attributes.step + " **********")
-      println("pageList before")
-      attributes.pages.foreach(page => print(" " + page.id))
-      println()
-      println("number of neighbors:" + arrivals.pages.length)
+      if (arrivals.pages.length > 0)
+      {
+        println("********** replication vprog, node:" + id + ", step:" + attributes.step + " **********")
+        println("pageList before")
+        attributes.pages.foreach(page => print(" " + page.id))
+        println()
+      }
     }
 
     // Concatenate the neighbor's bag of words into the existing pages
     attributes.pages = attributes.pages ++ arrivals.pages  // ++ is the concatenate operator for Scala container
+    attributes.pages = attributes.pages.distinct
 
     if (debug)
     {
-      println("pageList after")
-      attributes.pages.foreach(page => print(" " + page.id))
-      println()
+      if (arrivals.pages.length > 0)
+      {
+        println("pageList after")
+        attributes.pages.foreach(page => print(" " + page.id))
+        println()
+        println("number of neighbors:" + arrivals.pages.length)
+      }
     }
 
     // Return the modified attributes
@@ -258,18 +330,6 @@ class Butterflies() extends java.io.Serializable
   // Selects ads from this vertex's adList to send to a neighbor
   def replicationSendMsg(edge: EdgeTriplet[VertexAttributes, Int]): Iterator[(VertexId, ReplicateMessage)] =
   {
-    /*
-        println("********************* replicationSendMsg ******************************")
-        println("resident pageList")
-        edge.srcAttr.pages.foreach(page => print(" " + page.id))
-        println()
-        println("arriving pageList")
-        edge.srcAttr.pages.foreach(page => print(" " + page.id))
-        println()
-        val intersect = edge.srcAttr.pages.intersect(edge.dstAttr.pages).length
-        println("intersect:" + intersect)
-    */
-
     // Check if we've already replicated along this edge
     // Pregel will terminate when there are no more messages to process
     edge.srcAttr.step += 1
@@ -293,8 +353,9 @@ class Butterflies() extends java.io.Serializable
   // Passed into Pregel, aggregates the messages from all neighbors
   def replicationMergeMsg(msg1: ReplicateMessage, msg2: ReplicateMessage): ReplicateMessage =
   {
-    if (debug)
-    {
+    //if (debug)
+    if (false)
+    { 
       println("********** replication mergeMsg, node:" + msg1.vertexId + " **********")
       println("msg1")
       msg1.pages.foreach(page => print(" " + page.id))
@@ -308,7 +369,8 @@ class Butterflies() extends java.io.Serializable
     val combined = ReplicateMessage(msg1.vertexId, msg1.pages ++ msg2.pages)// ++ is the concatenate operator for Scala containers
 
     // Debug
-    if (debug)
+    //if (debug)
+    if (false)
     {
       println("combined")
       combined.pages.foreach(page => print(" " + page.id))
@@ -345,10 +407,11 @@ class Butterflies() extends java.io.Serializable
       attributes.ads.foreach(ad => print(" " + ad.id))
       println()
       println("number of arrivals:" + arrivals.ads.length)
+      println("inDegree:" +  attributes.inDegree + " outDegree:" + attributes.outDegree)
     }
 
     // Select the next vertex for each ad (may remain in this vertex)
-    attributes.ads.foreach( ad => ad.scorePages(attributes.pages))
+    attributes.ads.foreach( ad => ad.scorePages(attributes.pages, id))
 
     // Concatenate the new arrivals into the existing ads
     attributes.ads = attributes.ads ++ arrivals.ads  // ++ is the concatenate operator for Scala container
@@ -371,7 +434,7 @@ class Butterflies() extends java.io.Serializable
     // Hack to force Pregel to terminate after a certain number of super-steps
     // Pregel will terminate when there are no more messages to process
     edge.srcAttr.step = edge.srcAttr.step + 1
-    if (edge.srcAttr.step > 10000)
+    if (edge.srcAttr.step > 1000)
     {
       return Iterator.empty
     }
@@ -406,8 +469,9 @@ class Butterflies() extends java.io.Serializable
   // Passed into Pregel, aggregates the messages from all neighbors
   def migrationMergeMsg(msg1: MigrateMessage, msg2: MigrateMessage): MigrateMessage =
   {
-    if (debug)
-    {
+    //if (debug)
+    if (false)
+    { 
       println("********** migration mergeMsg, node:" + msg1.vertexId + " **********")
       println("msg1")
       msg1.ads.foreach(ad => print(" " + ad.id))
@@ -421,7 +485,8 @@ class Butterflies() extends java.io.Serializable
     val combined = MigrateMessage(msg1.vertexId, msg1.ads ++ msg2.ads)	// ++ is the concatenate operator for Scala containers
 
     // Debug
-    if (debug)
+    //if (debug)
+    if (false)
     {
       println("combined")
       combined.ads.foreach(ad => print(" " + ad.id))
@@ -450,13 +515,17 @@ class Butterflies() extends java.io.Serializable
   {
     println("********** OUTPUT GDF FILE **********")
 
-    val bigString =
-      "nodedef>name VARCHAR\n" + g.vertices.map(v => v._1 + "\n").collect.mkString +
-        "edgedef>node1 VARCHAR, node2 VARCHAR\n" + g.edges.map(e => e.srcId + "," + e.dstId + "\n").collect.mkString
+    val nodeString =
+      "nodedef>name VARCHAR, score VARCHAR\n" + g.vertices.map(v => v._1 + "," + v._1%3 + "\n").collect.mkString
+    val edgeString =
+      "edgedef>node1 VARCHAR, node2 VARCHAR\n" + g.edges.map(e => e.srcId + "," + e.dstId + "\n").collect.mkString
 
-    val fileName = "graph.gdf"
-    val pw = new java.io.PrintWriter(fileName)
-    pw.write(bigString)
+    //scala.tools.nsc.io.File("hdfs://ip-172-31-4-59:9000/user/butterflies/data/graph.gdf").writeAll(bigString)
+
+    val fileName = "hdfs://ip-172-31-4-59:9000/user/butterflies/data/graph.gdf"
+    val pw = new java.io.PrintWriter(fileName) 
+    pw.write(nodeString)
+    pw.write(edgeString)
     pw.close
   }
 
@@ -481,8 +550,8 @@ object Butterflies extends java.io.Serializable
 
     val sim = new Butterflies
     val initialGraph: Graph[VertexAttributes, Int] = sim.createGraph
-    //sim.replicate(initialGraph)
-    //sim.migrate(initialGraph)
+    sim.replicate(initialGraph)
+    sim.migrate(initialGraph)
     //sim.outputGDF(initialGraph)
 
     println("********** SIMULATION COMPLETE **********")
@@ -490,4 +559,5 @@ object Butterflies extends java.io.Serializable
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
+
 

@@ -66,7 +66,7 @@ DataScaling::DataScaling() :
 	kaggleFile(""), 
 	nodeFile(""),
 	edgeFile(""), 
-	nodes(NULL), 
+	//nodes(NULL), 
 	nodeCount(0)
 {
     // NA
