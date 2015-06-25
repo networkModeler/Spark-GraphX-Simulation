@@ -37,7 +37,7 @@ namespace node
 			bool findWord(int word);
 			bool addWord(int word);
 			bool addWordList(Node* otherNode);
-			bool addPartialWordList(Node* otherNode, int degree);
+			bool addPartialWordList(Node* otherNode, int numWords);
 			bool isCommon(Node* otherNode);
 			bool addEdge(int id);
 			bool findEdge(int id);

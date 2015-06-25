@@ -46,7 +46,12 @@ bool Node::findWord(int word)
 
 bool Node::addWord(int word)
 {
-	this->words.push_back(word);
+	// Check if this word is already in this node's word list
+	if (!this->findWord(word))
+	{
+		this->words.push_back(word);
+	}
+
 	return(true);
 }
 
@@ -55,55 +60,19 @@ bool Node::addWordList(Node* otherNode)
 	for (auto it = otherNode->words.begin(); it != otherNode->words.end(); ++it)
 	{
 		int word = *it;
-		// Check if this word is already in this node's word list
-		if (!this->findWord(word))
-		{
-			this->addWord(word);
-		}
+		this->addWord(word);
 	}
 	return(true);
 }
 
-bool Node::addPartialWordList(Node* otherNode, int degree)
+bool Node::addPartialWordList(Node* otherNode, int numWords)
 {
-	// Set a limit to how many words to copy
-	int maxNumWords = 3 * degree;
-
-	// Calculate how many words to copy, based on the degree of the new node
-	int numWords = otherNode->words.size();
-
-	// Check if we should just copy all the words
-	if (numWords <= maxNumWords)
+	// Randomly pick the words
+	for (int count = 0; count < numWords; ++ count)
 	{
-		for (auto it = otherNode->words.begin(); it != otherNode->words.end(); ++it)
-		{
-			int word = *it;
-
-			// Check if this word is already in this node's word list
-			if (!this->findWord(word))
-			{
-				this->addWord(word);
-			}
-		}
-	}
-
-	// Select the words randomly
-	else
-	{
-		int numWordsToCopy = maxNumWords;
-
-		// Randomly pick the words
-		for (int count = 0; count < numWordsToCopy; ++ count)
-		{
-			int randomIndex = rand() % numWords;
-			int word = otherNode->words.at(randomIndex);
-
-			// Check if this word is already in this node's word list
-			if (!this->findWord(word))
-			{
-				this->addWord(word);
-			}
-		}
+		int randomIndex = rand() % otherNode->words.size();
+		int word = otherNode->words.at(randomIndex);
+		this->addWord(word);
 	}
 
 	return(true);

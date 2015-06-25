@@ -145,10 +145,10 @@ case class ReplicateMessage(vertexId: VertexId, var pages: List[Page]) extends j
 class Butterflies() extends java.io.Serializable
 {
   // A boolean flag to enable debug statements
-  val debug = false
+  var debug = true
 
   // A boolean flag to read an edgelist file rather than compute the edges
-  val readEdgelistFile = false;
+  val readEdgelistFile = true;
 
   // Create a graph from a page file and an ad file
   def createGraph(): Graph[VertexAttributes, Int] = 
@@ -158,10 +158,13 @@ class Butterflies() extends java.io.Serializable
     val sc = new SparkContext
 
     // Parse a text file with the vertex information
-    //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1Mnodes.txt")
-    val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1000pages.txt")
-    //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1Knodes.txt")
+    //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1M_nodes.txt")
+    //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/10K_nodes.txt")
+    val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/100_nodes.txt")
     //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/queryid_tokensid.txt")
+    //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/10Mpages.txt")
+    //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1Mpages.txt")
+    //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1000pages.txt")
     //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/trivial_nodes.txt")
       .map { l =>
         val tokens = l.split("\\s+")     // split("\\s") will split on whitespace
@@ -172,17 +175,21 @@ class Butterflies() extends java.io.Serializable
     println("********** NUMBER OF PAGES: " + pages.count + " **********")
 
     // Parse a text file with the ad information
-    //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1000ads.txt")
-    val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1000descriptions.txt")
-    //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/purchasedkeywordid_tokensid.txt")
+    //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1M_ads.txt")
+    //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/10K_ads.txt")
+    val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/100_ads.txt")
     //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/descriptionid_tokensid.txt")
+    //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/purchasedkeywordid_tokensid.txt")
+    //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1000descriptions.txt")
+    //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1000ads.txt")
     //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/trivial_ads.txt")
       .map { l =>
         val tokens = l.split("\\s+")     // split("\\s") will split on whitespace
         val id = tokens(0).trim.toLong
         val tokenList = tokens.last.split('|').toList
         val next: VertexId = 0
-        val vertexId: VertexId = id % 1000
+        //val vertexId: VertexId = id % 1000
+        val vertexId: VertexId = id
         (vertexId, Ad(id, tokenList, next))
       }
     println("********** NUMBER OF ADS: " + ads.count + " **********")
@@ -192,9 +199,10 @@ class Butterflies() extends java.io.Serializable
     if (readEdgelistFile)
     {
       // Create a graph from an edgelist file
-      //GraphLoader.edgeListFile(sc, "hdfs://ip-172-31-4-59:9000/user/butterflies/data/1Medges.txt")
-      //GraphLoader.edgeListFile(sc, "hdfs://ip-172-31-4-59:9000/user/butterflies/data/1Kedges.txt")
-      GraphLoader.edgeListFile(sc, "hdfs://ip-172-31-4-59:9000/user/butterflies/data/1000_saved_edges.txt")
+      //GraphLoader.edgeListFile(sc, "hdfs://ip-172-31-4-59:9000/user/butterflies/data/1M_edges.txt")
+      //GraphLoader.edgeListFile(sc, "hdfs://ip-172-31-4-59:9000/user/butterflies/data/10K_edges.txt")
+      GraphLoader.edgeListFile(sc, "hdfs://ip-172-31-4-59:9000/user/butterflies/data/100_edges.txt")
+      //GraphLoader.edgeListFile(sc, "hdfs://ip-172-31-4-59:9000/user/butterflies/data/1000_saved_edges.txt")
     }
     else
     {
@@ -284,7 +292,7 @@ class Butterflies() extends java.io.Serializable
   {
     println("********** REPLICATION BEGINS  **********")
 
-    graph.pregel[ReplicateMessage](ReplicateMessage(0L, List.empty))(replicationVprog, replicationSendMsg, replicationMergeMsg)
+    graph.pregel[ReplicateMessage](ReplicateMessage(0L, List.empty), maxIterations = 1)(replicationVprog, replicationSendMsg, replicationMergeMsg)
 
     println("********** REPLICATION ENDS  **********")
   }
@@ -294,7 +302,7 @@ class Butterflies() extends java.io.Serializable
   def replicationVprog(id: VertexId, attributes: VertexAttributes, arrivals: ReplicateMessage) =
   {
     // Increment which Pregel super-step we're in
-    //attributes.step += 1;
+    attributes.step += 1;
 
     if (debug)
     {
@@ -330,14 +338,6 @@ class Butterflies() extends java.io.Serializable
   // Selects ads from this vertex's adList to send to a neighbor
   def replicationSendMsg(edge: EdgeTriplet[VertexAttributes, Int]): Iterator[(VertexId, ReplicateMessage)] =
   {
-    // Check if we've already replicated along this edge
-    // Pregel will terminate when there are no more messages to process
-    edge.srcAttr.step += 1
-    if (edge.srcAttr.step > 1)
-    {
-      return Iterator.empty
-    }
-
     if (debug)
     {
       println("********** replication sendMsg, node:" + edge.dstId + ", step:" + edge.srcAttr.step + " **********")
@@ -368,7 +368,6 @@ class Butterflies() extends java.io.Serializable
     // Merge the two page lists into a single list
     val combined = ReplicateMessage(msg1.vertexId, msg1.pages ++ msg2.pages)// ++ is the concatenate operator for Scala containers
 
-    // Debug
     //if (debug)
     if (false)
     {
@@ -387,11 +386,11 @@ class Butterflies() extends java.io.Serializable
 
   // Ad migration
   // Use the Pregel API of GraphX because it manages the caching of intermediate data better
-  def migrate(graph: Graph[VertexAttributes, Int]) =
+  def migrate(graph: Graph[VertexAttributes, Int], iterations: Int) =
   {
     println("********** MIGRATION BEGINS  **********")
 
-    graph.pregel[MigrateMessage](MigrateMessage(0L, List.empty))(migrationVprog, migrationSendMsg, migrationMergeMsg)
+    graph.pregel[MigrateMessage](MigrateMessage(0L, List.empty), maxIterations = iterations)(migrationVprog, migrationSendMsg, migrationMergeMsg)
 
     println("********** MIGRATION ENDS  **********")
   }
@@ -400,6 +399,9 @@ class Butterflies() extends java.io.Serializable
   // Imports whatever ads were sent by neighbors
   def migrationVprog(id: VertexId, attributes: VertexAttributes, arrivals: MigrateMessage) =
   {
+    // Increment which Pregel super-step we're in
+    attributes.step += 1;
+
     if (debug)
     {
       println("********** migration vprog, node:" + id + " **********")
@@ -431,17 +433,7 @@ class Butterflies() extends java.io.Serializable
   // Selects ads from this vertex's adList to send to a neighbor
   def migrationSendMsg(edge: EdgeTriplet[VertexAttributes, Int]): Iterator[(VertexId, MigrateMessage)] =
   {
-    // Hack to force Pregel to terminate after a certain number of super-steps
-    // Pregel will terminate when there are no more messages to process
-    edge.srcAttr.step = edge.srcAttr.step + 1
-    if (edge.srcAttr.step > 1000)
-    {
-      return Iterator.empty
-    }
-
     // Find ads that want to migrate
-    val rng = new scala.util.Random(0)
-    //val leaving = edge.srcAttr.ads.filter(_ => rng.nextInt(100) < 50)
     val currentVertex = edge.srcId
     val leaving = edge.srcAttr.ads.filter( ad => ad.next != currentVertex )
 
@@ -515,18 +507,23 @@ class Butterflies() extends java.io.Serializable
   {
     println("********** OUTPUT GDF FILE **********")
 
-    val nodeString =
-      "nodedef>name VARCHAR, score VARCHAR\n" + g.vertices.map(v => v._1 + "," + v._1%3 + "\n").collect.mkString
-    val edgeString =
-      "edgedef>node1 VARCHAR, node2 VARCHAR\n" + g.edges.map(e => e.srcId + "," + e.dstId + "\n").collect.mkString
+    //val fileName = "hdfs://ip-172-31-4-59:9000/user/butterflies/data/graph.gdf"
+    //val pw = new java.io.PrintWriter(fileName) 
 
-    //scala.tools.nsc.io.File("hdfs://ip-172-31-4-59:9000/user/butterflies/data/graph.gdf").writeAll(bigString)
+    // Output the nodes
+    //pw.write("nodedef>name VARCHAR, color VARCHAR\n")
+    //g.vertices.map(v => pw.write(v._1 + "," + v._1%3 + "\n"))
+    //val nodeRdd = g.vertices.map(v => if (v._2.pages(0).score == 0)(v._1 + ",'0,0,255'") else (v._1 + ",'255,0,0'"))
+    val nodeRdd = g.vertices.map(v => if (v._1 % 2 == 0)(v._1 + ",'0,0,255'") else (v._1 + ",'255,0,0'"))
+    nodeRdd.saveAsTextFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/nodes.gdf")
 
-    val fileName = "hdfs://ip-172-31-4-59:9000/user/butterflies/data/graph.gdf"
-    val pw = new java.io.PrintWriter(fileName) 
-    pw.write(nodeString)
-    pw.write(edgeString)
-    pw.close
+    // Output the edges
+    //pw.write("edgedef>node1 VARCHAR, node2 VARCHAR\n")
+    //g.edges.map(e => pw.write(e.srcId + "," + e.dstId + "\n"))
+    val edgeRdd = g.edges.map(e => (e.srcId + "," + e.dstId))
+    edgeRdd.saveAsTextFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/edges.gdf")
+
+    //pw.close
   }
 
   ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -542,22 +539,21 @@ object Butterflies extends java.io.Serializable
 
     // Initialize the Spark environment
     // Use the Kryo serialization because it's smaller and faster than the Java serialization
-    //val conf = new SparkConf().setAppName("Butterflies")
+    val conf = new SparkConf().setAppName("Butterflies")
     //conf.set("spark.serializer", "JavaSerializer")
-    //conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-    //conf.registerKryoClasses(Array(classOf[Ad], classOf[List[Ad]], classOf[VertexAttributes], classOf[Butterflies]))
-    //val sc = new SparkContext(conf)
+    conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+    conf.registerKryoClasses(Array(classOf[Page], classOf[Ad], classOf[List[Ad]], 
+                             classOf[VertexAttributes], classOf[Butterflies]))
 
     val sim = new Butterflies
     val initialGraph: Graph[VertexAttributes, Int] = sim.createGraph
     sim.replicate(initialGraph)
-    sim.migrate(initialGraph)
-    //sim.outputGDF(initialGraph)
+    sim.migrate(initialGraph, 1000)
+    sim.outputGDF(initialGraph)
 
     println("********** SIMULATION COMPLETE **********")
   }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
-
 

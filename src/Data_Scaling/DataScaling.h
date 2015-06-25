@@ -26,20 +26,22 @@ namespace dataScaling
 	class DataScaling
 	{
 		private:
+			int			maxWords;
+			int			wordsPerNode;
 			int			degree;
 			int			levels;
-			string		kaggleFile;
+			int			nodesPerLevel;
+			int			nodeCount;
 			string		nodeFile;
 			string		edgeFile;
+			string		adFile;
 			LevelList	nodes;
-			int			nodeCount;
 
 			bool initNodes();
-			bool openFiles(ifstream& kaggleFile, ofstream& nodeFile, ofstream& edgeFile);
-			bool parseFile(ifstream& kaggleFile, ofstream& nodeFile, ofstream& edgeFile);
-			bool processBlock(NodeList* nodeList, ofstream& nodeFile, ofstream& edgeFile);
-			bool generateLevel(int level);
-			bool processLevel(int level, ofstream& nodeFile, ofstream& edgeFile);
+			bool openFiles(ofstream& nodeFile, ofstream& edgeFile, ofstream& adFile);
+			bool generateFirstLevel();
+			bool generateNextLevel(int level);
+			bool saveLevel(NodeList* nodeList, ofstream& nodeFile, ofstream& edgeFile, ofstream& adFile);
 			bool makeSiblingEdges(NodeList* nodeList);
 			bool printNodes();
 
