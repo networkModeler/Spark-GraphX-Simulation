@@ -39,7 +39,7 @@ case class Page(id: VertexId, tokens: List[String], var score: Int) extends java
 // Define a class for an ad
 case class Ad(id: Long, tokens: List[String], var next: VertexId) extends java.io.Serializable
 {
-  val debug = true
+  val debug = false
 
   def similarity(page: Page) : Int =
   {
@@ -65,7 +65,7 @@ case class Ad(id: Long, tokens: List[String], var next: VertexId) extends java.i
       val filtered = pageList.filter(_.id == this.next)
       if (filtered.length > 0)
       {
-        println("********** scorePages **********")
+        println("********** scorePages, node=" + currentPage + " **********")
         pageList.foreach(println)
 
         val page = filtered(0)
@@ -145,7 +145,7 @@ case class ReplicateMessage(vertexId: VertexId, var pages: List[Page]) extends j
 class Butterflies() extends java.io.Serializable
 {
   // A boolean flag to enable debug statements
-  var debug = true
+  var debug = false
 
   // A boolean flag to read an edgelist file rather than compute the edges
   val readEdgelistFile = true;
@@ -160,7 +160,8 @@ class Butterflies() extends java.io.Serializable
     // Parse a text file with the vertex information
     //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1M_nodes.txt")
     //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/10K_nodes.txt")
-    val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/100_nodes.txt")
+    val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/3K_nodes.txt")
+    //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/100_nodes.txt")
     //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/queryid_tokensid.txt")
     //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/10Mpages.txt")
     //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1Mpages.txt")
@@ -177,7 +178,8 @@ class Butterflies() extends java.io.Serializable
     // Parse a text file with the ad information
     //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1M_ads.txt")
     //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/10K_ads.txt")
-    val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/100_ads.txt")
+    val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/3K_ads.txt")
+    //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/100_ads.txt")
     //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/descriptionid_tokensid.txt")
     //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/purchasedkeywordid_tokensid.txt")
     //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1000descriptions.txt")
@@ -201,7 +203,8 @@ class Butterflies() extends java.io.Serializable
       // Create a graph from an edgelist file
       //GraphLoader.edgeListFile(sc, "hdfs://ip-172-31-4-59:9000/user/butterflies/data/1M_edges.txt")
       //GraphLoader.edgeListFile(sc, "hdfs://ip-172-31-4-59:9000/user/butterflies/data/10K_edges.txt")
-      GraphLoader.edgeListFile(sc, "hdfs://ip-172-31-4-59:9000/user/butterflies/data/100_edges.txt")
+      GraphLoader.edgeListFile(sc, "hdfs://ip-172-31-4-59:9000/user/butterflies/data/3K_edges.txt")
+      //GraphLoader.edgeListFile(sc, "hdfs://ip-172-31-4-59:9000/user/butterflies/data/100_edges.txt")
       //GraphLoader.edgeListFile(sc, "hdfs://ip-172-31-4-59:9000/user/butterflies/data/1000_saved_edges.txt")
     }
     else
@@ -316,8 +319,7 @@ class Butterflies() extends java.io.Serializable
     }
 
     // Concatenate the neighbor's bag of words into the existing pages
-    attributes.pages = attributes.pages ++ arrivals.pages  // ++ is the concatenate operator for Scala container
-    attributes.pages = attributes.pages.distinct
+    attributes.pages = (attributes.pages ++ arrivals.pages).distinct  // ++ is the concatenate operator for Scala container
 
     if (debug)
     {
@@ -390,7 +392,7 @@ class Butterflies() extends java.io.Serializable
   {
     println("********** MIGRATION BEGINS  **********")
 
-    graph.pregel[MigrateMessage](MigrateMessage(0L, List.empty), maxIterations = iterations)(migrationVprog, migrationSendMsg, migrationMergeMsg)
+    graph.pregel[MigrateMessage](MigrateMessage(-1L, List.empty), maxIterations = iterations)(migrationVprog, migrationSendMsg, migrationMergeMsg)
 
     println("********** MIGRATION ENDS  **********")
   }
@@ -402,6 +404,8 @@ class Butterflies() extends java.io.Serializable
     // Increment which Pregel super-step we're in
     attributes.step += 1;
 
+    //val localDebug = arrivals.ads.exists( ad => ad.id == 78)
+    //if (debug || localDebug)
     if (debug)
     {
       println("********** migration vprog, node:" + id + " **********")
@@ -412,12 +416,13 @@ class Butterflies() extends java.io.Serializable
       println("inDegree:" +  attributes.inDegree + " outDegree:" + attributes.outDegree)
     }
 
+    // Concatenate the new arrivals into the existing ads
+    attributes.ads = (attributes.ads ++ arrivals.ads.filter(_.id >= 0)).distinct  // ++ is the concatenate operator for Scala container
+
     // Select the next vertex for each ad (may remain in this vertex)
     attributes.ads.foreach( ad => ad.scorePages(attributes.pages, id))
 
-    // Concatenate the new arrivals into the existing ads
-    attributes.ads = attributes.ads ++ arrivals.ads  // ++ is the concatenate operator for Scala container
-
+    //if (debug || localDebug)
     if (debug)
     {
       println("adList after")
@@ -437,20 +442,39 @@ class Butterflies() extends java.io.Serializable
     val currentVertex = edge.srcId
     val leaving = edge.srcAttr.ads.filter( ad => ad.next != currentVertex )
 
+    //val localDebug = edge.srcAttr.ads.exists( ad => ad.id == 78)
+    //if (debug || localDebug)
     if (debug)
     {
       println("********** migration sendMsg, node:" + edge.srcId + ", step:" + (edge.srcAttr.step) + " **********")
+      println("adList before")
+      edge.srcAttr.ads.foreach(ad => print(" " + ad.id))
+      println()
       println("number of ads leaving:" + leaving.length)
       leaving.foreach(ad => println("ad " + ad.id + " to vertex " + edge.dstId))
     }
 
     // Remove the ads from this vertex's ad list
-    edge.srcAttr.ads = edge.srcAttr.ads filterNot (leaving contains)
+    edge.srcAttr.ads = edge.srcAttr.ads.filterNot(leaving.contains(_))
+
+    //if (debug || localDebug)
+    if (debug)
+    {
+      println("adList after")
+      edge.srcAttr.ads.foreach(ad => print(" " + ad.id))
+      println()
+    }
 
     // Queue the messages
     if (leaving.nonEmpty)
     {
       Iterator((edge.dstId, MigrateMessage(edge.dstId, leaving)))
+    }
+    // Pregel only invokes sendMsg on vertices that received a message on the previous round
+    // We must send a dummy message to vertices that have ads or else they'll never leave that vertex
+    else if (edge.dstAttr.ads.length > 0)
+    {
+      Iterator((edge.dstId, MigrateMessage(-1L, List.empty)))
     }
     else
     {
@@ -548,7 +572,7 @@ object Butterflies extends java.io.Serializable
     val sim = new Butterflies
     val initialGraph: Graph[VertexAttributes, Int] = sim.createGraph
     sim.replicate(initialGraph)
-    sim.migrate(initialGraph, 1000)
+    sim.migrate(initialGraph, 100)
     sim.outputGDF(initialGraph)
 
     println("********** SIMULATION COMPLETE **********")
