@@ -32,17 +32,19 @@ namespace dataScaling
 			int			levels;
 			int			nodesPerLevel;
 			int			nodeCount;
+			int			edgeCount;
+			string		kaggleFile;
 			string		nodeFile;
 			string		edgeFile;
 			string		adFile;
 			LevelList	nodes;
 
 			bool initNodes();
-			bool openFiles(ofstream& nodeFile, ofstream& edgeFile, ofstream& adFile);
-			bool generateFirstLevel();
+			bool openFiles(ifstream& kaggleFile, ofstream& nodeFile, ofstream& edgeFile, ofstream& adFile);
+			bool generateFirstLevel(ifstream& kaggleFile);
 			bool generateNextLevel(int level);
-			bool saveLevel(NodeList* nodeList, ofstream& nodeFile, ofstream& edgeFile, ofstream& adFile);
-			bool makeSiblingEdges(NodeList* nodeList);
+			bool saveLevel(int level, ofstream& nodeFile, ofstream& edgeFile, ofstream& adFile);
+			bool makeSiblingEdges(NodeList* nodeList, int level);
 			bool printNodes();
 
 		public:
@@ -56,3 +58,4 @@ namespace dataScaling
 ////////////////////////////////////////////////////////////////////////////////
 #endif	// DATASCALING_H
 ////////////////////////////////////////////////////////////////////////////////
+

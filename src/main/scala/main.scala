@@ -37,9 +37,9 @@ case class Page(id: VertexId, tokens: List[String], var score: Int) extends java
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Define a class for an ad
-case class Ad(id: Long, tokens: List[String], var next: VertexId) extends java.io.Serializable
+case class Ad(id: Long, tokens: List[String], var next: VertexId, var score: Int) extends java.io.Serializable
 {
-  val debug = false
+  val debug = true
 
   def similarity(page: Page) : Int =
   {
@@ -59,17 +59,19 @@ case class Ad(id: Long, tokens: List[String], var next: VertexId) extends java.i
     // Randomly select a page, weighted by their similarity scores
     this.next = this.selectWeightedRandom(pageList, currentPage)
 
+    val filtered = pageList.filter(_.id == this.next)
+    val page = filtered(0)
+    val score = page.score
+    this.score = score
+
     // Statistics
     if (debug)
     {
-      val filtered = pageList.filter(_.id == this.next)
       if (filtered.length > 0)
       {
         println("********** scorePages, node=" + currentPage + " **********")
         pageList.foreach(println)
 
-        val page = filtered(0)
-        val score = page.score
         println("migrate ad " + this.id + " from page " + currentPage + " to page " + this.next + ", score " + score)
       }
     }
@@ -82,8 +84,7 @@ case class Ad(id: Long, tokens: List[String], var next: VertexId) extends java.i
     if (pageList.length == 1)
     {
       return pageList(0).id
-    }
-
+    } 
     // Create a distribution normalized from 0 to 1
     val sum = pageList.map(_.score + 1.0).sum	// + 1.0 because many scores will be zero
     val distribution = pageList.map(page => (page.id, (page.score + 1.0) / sum)).toMap
@@ -110,13 +111,13 @@ case class Ad(id: Long, tokens: List[String], var next: VertexId) extends java.i
           selectedPage = page
         }
       }
+    }
 
-      // We land here if there are duplicates in the pageList
-      // Greedily select the page with the highest similarity score
-      if (selectedPage == currentPage)
-      {
-        selectedPage = pageList.maxBy(_.score).id
-      }
+    // We land here if there are duplicates in the pageList
+    // Greedily select the page with the highest similarity score
+    if (selectedPage == currentPage)
+    {
+      selectedPage = pageList.maxBy(_.score).id
     }
 
     return selectedPage
@@ -126,8 +127,23 @@ case class Ad(id: Long, tokens: List[String], var next: VertexId) extends java.i
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Define a class for GraphX vertex attributes
-case class VertexAttributes(var pages: List[Page], var ads: List[Ad], var step: Long, inDegree: Int, outDegree: Int)
-  extends java.io.Serializable
+class VertexAttributes(var pages: List[Page], var ads: List[Ad], var step: Long, val inDegree: Int, val outDegree: Int)
+extends java.io.Serializable
+{
+  // Define alternative methods to be used as the score
+  def averageScore() =
+  {
+    if (this.ads.length == 0) 0 else this.ads.map(_.score).sum / this.ads.length
+  }
+
+  def maxScore() =
+  {
+    if(this.ads.length == 0) 0 else this.ads.map(_.score).max
+  }
+
+  // Select averageScore as the function to be used
+  val score = averageScore _
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -145,7 +161,7 @@ case class ReplicateMessage(vertexId: VertexId, var pages: List[Page]) extends j
 class Butterflies() extends java.io.Serializable
 {
   // A boolean flag to enable debug statements
-  var debug = false
+  var debug = true
 
   // A boolean flag to read an edgelist file rather than compute the edges
   val readEdgelistFile = true;
@@ -158,15 +174,7 @@ class Butterflies() extends java.io.Serializable
     val sc = new SparkContext
 
     // Parse a text file with the vertex information
-    //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1M_nodes.txt")
-    //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/10K_nodes.txt")
-    val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/3K_nodes.txt")
-    //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/100_nodes.txt")
-    //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/queryid_tokensid.txt")
-    //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/10Mpages.txt")
-    //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1Mpages.txt")
-    //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1000pages.txt")
-    //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/trivial_nodes.txt")
+    val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/queryid_tokensid.txt")
       .map { l =>
         val tokens = l.split("\\s+")     // split("\\s") will split on whitespace
         val id = tokens(0).trim.toLong
@@ -176,23 +184,15 @@ class Butterflies() extends java.io.Serializable
     println("********** NUMBER OF PAGES: " + pages.count + " **********")
 
     // Parse a text file with the ad information
-    //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1M_ads.txt")
-    //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/10K_ads.txt")
-    val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/3K_ads.txt")
-    //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/100_ads.txt")
-    //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/descriptionid_tokensid.txt")
-    //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/purchasedkeywordid_tokensid.txt")
-    //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1000descriptions.txt")
-    //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/1000ads.txt")
-    //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/trivial_ads.txt")
+    val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/descriptionid_tokensid.txt")
       .map { l =>
         val tokens = l.split("\\s+")     // split("\\s") will split on whitespace
         val id = tokens(0).trim.toLong
         val tokenList = tokens.last.split('|').toList
         val next: VertexId = 0
-        //val vertexId: VertexId = id % 1000
-        val vertexId: VertexId = id
-        (vertexId, Ad(id, tokenList, next))
+        val score = 0
+        val vertexId: VertexId = (id + 1) % 3000	// assign ad to arbitrary page
+        (vertexId, Ad(id, tokenList, next, score))
       }
     println("********** NUMBER OF ADS: " + ads.count + " **********")
 
@@ -201,11 +201,7 @@ class Butterflies() extends java.io.Serializable
     if (readEdgelistFile)
     {
       // Create a graph from an edgelist file
-      //GraphLoader.edgeListFile(sc, "hdfs://ip-172-31-4-59:9000/user/butterflies/data/1M_edges.txt")
-      //GraphLoader.edgeListFile(sc, "hdfs://ip-172-31-4-59:9000/user/butterflies/data/10K_edges.txt")
-      GraphLoader.edgeListFile(sc, "hdfs://ip-172-31-4-59:9000/user/butterflies/data/3K_edges.txt")
-      //GraphLoader.edgeListFile(sc, "hdfs://ip-172-31-4-59:9000/user/butterflies/data/100_edges.txt")
-      //GraphLoader.edgeListFile(sc, "hdfs://ip-172-31-4-59:9000/user/butterflies/data/1000_saved_edges.txt")
+      GraphLoader.edgeListFile(sc, "hdfs://ip-172-31-4-59:9000/user/butterflies/data/saved_edges.txt")
     }
     else
     {
@@ -226,13 +222,13 @@ class Butterflies() extends java.io.Serializable
     }
 
     // Copy into a graph with nodes that have vertexAttributes
-    val attributeGraph: Graph[VertexAttributes, Int] =
-      edgeGraph.mapVertices{ (id, v) => VertexAttributes(Nil, Nil, 0, 0, 0) }
+    //val attributeGraph: Graph[VertexAttributes, Int] =
+    val attributeGraph = edgeGraph.mapVertices{ (id, v) => new VertexAttributes(Nil, Nil, 0, 0, 0) }
 
     // Add the node information into the graph
     val nodeGraph = attributeGraph.outerJoinVertices(pages) {
       (vertexId, attr, pageTokenList) => 
-        VertexAttributes(List(Page(vertexId, pageTokenList.getOrElse(List.empty), 0)), 
+        new VertexAttributes(List(Page(vertexId, pageTokenList.getOrElse(List.empty), 0)), 
                          attr.ads, attr.step, attr.inDegree, attr.outDegree)
     }
 
@@ -240,12 +236,12 @@ class Butterflies() extends java.io.Serializable
     val degreeGraph = nodeGraph
     .outerJoinVertices(nodeGraph.inDegrees) 
     {
-      case (id, attr, inDegree) => VertexAttributes(attr.pages, attr.ads, attr.step, inDegree.getOrElse(0), attr.outDegree)
+      case (id, attr, inDegree) => new VertexAttributes(attr.pages, attr.ads, attr.step, inDegree.getOrElse(0), attr.outDegree)
     }
     .outerJoinVertices(nodeGraph.outDegrees) 
     {
       case (id, attr, outDegree) => 
-        VertexAttributes(attr.pages, attr.ads, attr.step, attr.inDegree, outDegree.getOrElse(0))
+        new VertexAttributes(attr.pages, attr.ads, attr.step, attr.inDegree, outDegree.getOrElse(0))
     }
 
     // Add the ads to the nodes
@@ -255,11 +251,11 @@ class Butterflies() extends java.io.Serializable
       {
         if (ad.isEmpty)
         {
-          VertexAttributes(attr.pages, List.empty, attr.step, attr.inDegree, attr.outDegree)
+          new VertexAttributes(attr.pages, List.empty, attr.step, attr.inDegree, attr.outDegree)
         }
         else
         {
-          VertexAttributes(attr.pages, List(Ad(ad.get.id, ad.get.tokens, ad.get.next)), attr.step, attr.inDegree, attr.outDegree)
+          new VertexAttributes(attr.pages, List(Ad(ad.get.id, ad.get.tokens, ad.get.next, ad.get.score)), attr.step, attr.inDegree, attr.outDegree)
         }
       }
     }
@@ -527,27 +523,20 @@ class Butterflies() extends java.io.Serializable
   ////////////////////////////////////////////////////////////////////////////////////////////////
 
   // Output the graph in GDF file format
-  def outputGDF[VertexAttributes, Int](g:Graph[VertexAttributes, Int]) =
+  def outputGDF(g:Graph[VertexAttributes, Int]) =
   {
     println("********** OUTPUT GDF FILE **********")
 
-    //val fileName = "hdfs://ip-172-31-4-59:9000/user/butterflies/data/graph.gdf"
-    //val pw = new java.io.PrintWriter(fileName) 
-
     // Output the nodes
-    //pw.write("nodedef>name VARCHAR, color VARCHAR\n")
-    //g.vertices.map(v => pw.write(v._1 + "," + v._1%3 + "\n"))
-    //val nodeRdd = g.vertices.map(v => if (v._2.pages(0).score == 0)(v._1 + ",'0,0,255'") else (v._1 + ",'255,0,0'"))
-    val nodeRdd = g.vertices.map(v => if (v._1 % 2 == 0)(v._1 + ",'0,0,255'") else (v._1 + ",'255,0,0'"))
+    //"nodedef>name VARCHAR, color VARCHAR\n"
+    val nodeRdd = g.vertices.map(v => if(v._2.score() == 0)(v._1 + ",'0,0,255'") else (v._1 + ",'255,0,0'"))
+    //val nodeRdd = g.vertices.map(v => if(v._1 % 100  < 50)(v._1 + ",'0,0,255'") else (v._1 + ",'255,0,0'"))
     nodeRdd.saveAsTextFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/nodes.gdf")
 
     // Output the edges
-    //pw.write("edgedef>node1 VARCHAR, node2 VARCHAR\n")
-    //g.edges.map(e => pw.write(e.srcId + "," + e.dstId + "\n"))
+    //"edgedef>node1 VARCHAR, node2 VARCHAR\n"
     val edgeRdd = g.edges.map(e => (e.srcId + "," + e.dstId))
     edgeRdd.saveAsTextFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/edges.gdf")
-
-    //pw.close
   }
 
   ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -564,7 +553,6 @@ object Butterflies extends java.io.Serializable
     // Initialize the Spark environment
     // Use the Kryo serialization because it's smaller and faster than the Java serialization
     val conf = new SparkConf().setAppName("Butterflies")
-    //conf.set("spark.serializer", "JavaSerializer")
     conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
     conf.registerKryoClasses(Array(classOf[Page], classOf[Ad], classOf[List[Ad]], 
                              classOf[VertexAttributes], classOf[Butterflies]))

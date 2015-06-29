@@ -62,14 +62,16 @@ namespace dataScaling {
 // Constructor
 DataScaling::DataScaling() : 
 	maxWords(10000),
-	wordsPerNode(50),
+	wordsPerNode(10),
 	degree(10), 
-	levels(10),
-	nodesPerLevel(1000),
+	levels(5),
+	nodesPerLevel(100000),
 	nodeCount(0),
-	nodeFile("nodes.txt"),
-	edgeFile("edges.txt"),
-	adFile("ads.txt")
+	edgeCount(0),
+	kaggleFile("100K_pages.txt"),
+	nodeFile("100K_nodes.txt"),
+	edgeFile("100K_edges.txt"),
+	adFile("100K_ads.txt")
 {
     // NA
 }
@@ -90,19 +92,18 @@ DataScaling::~DataScaling()
 // Parse command line arguments
 bool DataScaling::processArguments(int argc, char* argv[])
 {
-    if ((argc != 1) && (argc != 6))
+    if ((argc != 1) && (argc != 5))
     {
-        cout << "Usage:  DataScaling <degree> <levels> <nodeFile> <edgeFile> <adFile>" << endl;
+        cout << "Usage:  DataScaling <kaggleFile> <nodeFile> <edgeFile> <adFile>" << endl;
         return(false);
     }
 
-	if (argc == 6)
+	if (argc == 5)
 	{
-		this->degree = atoi(argv[1]);
-		this->levels = atoi(argv[2]);
-		this->nodeFile = argv[3];
-		this->edgeFile = argv[4];
-		this->adFile = argv[5];
+		this->kaggleFile = argv[1];
+		this->nodeFile = argv[2];
+		this->edgeFile = argv[3];
+		this->adFile = argv[4];
 	}
 
 	return(true);
@@ -112,10 +113,11 @@ bool DataScaling::processArguments(int argc, char* argv[])
 bool DataScaling::generate()
 {
 	// Open the files
+	ifstream kaggleFile;
 	ofstream nodeFile;
 	ofstream edgeFile;
 	ofstream adFile;
-	if (!this->openFiles(nodeFile, edgeFile, adFile))
+	if (!this->openFiles(kaggleFile, nodeFile, edgeFile, adFile))
 	{
 		return(false);
 	}
@@ -127,25 +129,38 @@ bool DataScaling::generate()
 	srand(0);
 
 	// Create the new nodes
-	this->generateFirstLevel();
+	this->generateFirstLevel(kaggleFile);
 	for (int i = 1; i < this->levels; ++i)
 	{
 		this->generateNextLevel(i);
-		this->saveLevel(this->nodes[i - 1], nodeFile, edgeFile, adFile);
+		this->saveLevel((i - 1), nodeFile, edgeFile, adFile);
 	}
-	this->saveLevel(this->nodes[this->levels - 1], nodeFile, edgeFile, adFile);
+	this->saveLevel((this->levels - 1), nodeFile, edgeFile, adFile);
 
 	// Close the files
+	kaggleFile.close();
 	nodeFile.close();
 	edgeFile.close();
 	adFile.close();
+
+	// Print some statistics
+	cout << "number of nodes: " << this->nodeCount << endl;
+	cout << "number of edges: " << this->edgeCount << endl;
+	cout << "average degree: " << this->edgeCount / this->nodeCount << endl;
 
 	return(true);
 }
 
 // Open the various files for output
-bool DataScaling::openFiles(ofstream& nodeFile, ofstream& edgeFile, ofstream& adFile)
+bool DataScaling::openFiles(ifstream& kaggleFile, ofstream& nodeFile, ofstream& edgeFile, ofstream& adFile)
 {
+	kaggleFile.open(this->kaggleFile);
+	if (!kaggleFile.is_open())
+	{
+		cout << "Failed to open input kaggle file:" << this->kaggleFile << endl;
+		return(false);
+	}
+
 	nodeFile.open(this->nodeFile);
 	if (!nodeFile.is_open())
 	{
@@ -181,6 +196,69 @@ bool DataScaling::initNodes()
 	return(true);
 }
 
+
+// Read the Kaggle file into a vector of nodes
+bool DataScaling::generateFirstLevel(ifstream& kaggleFile)
+{
+	cout << "Level:0" << "\t";
+
+        // Set the maximum number of nodes per block, so a block can be processed in memory
+        int maxNodes = 1024 * 64;                       // must be a power of two
+        int maxNodesFlag = maxNodes - 1;        // bit trick to avoid modulo later
+
+        // Get the nodeList for level 0
+        NodeList* nodeList = this->nodes[0];
+
+        // Process each line in the kaggle file
+        int block = 0;
+	stringstream ss;
+	string buffer;
+	string token;
+        while (getline(kaggleFile, buffer))
+        {
+                // C++ stuff so we can tokenize the line
+                ss.clear();
+                ss.str("");
+                ss << buffer;
+
+                // The node id is always the first token on the kaggle line
+                ss >> token;
+                int nodeId = atoi(token.c_str());
+
+                // Create a node object
+                Node* node = new Node(nodeId);
+                nodeList->push_back(node);
+
+                // Parse this node's word list
+                while (getline(ss, token, '|'))         // kaggle file delimits words with a '|' character
+                {
+                        int hashKeyOfWord = atoi(token.c_str());
+                        node->addWord(hashKeyOfWord);
+        	}
+
+                // We need to process the input in blocks, can't fit all the nodes in memory
+
+                // Check if we've read in a full block yet
+                // Bit AND'ing with maxNodesFlag is a trick to avoid expensive modulo
+                if ((nodeId > 0) && !(nodeId & maxNodesFlag))
+                {
+                        cout << "Block:" << ++block << "\t";
+                        this->nodeCount += nodeList->size();
+                }
+        }
+
+        // Process the last incomplete block
+        {
+                cout << "Block:" << ++block << "\t";
+                this->nodeCount += nodeList->size();
+        }
+
+        cout << "Level:1\tnodeCount:" << this->nodeCount << endl;
+
+    return(true);
+}
+
+/*
 // Generate a new level of nodes
 bool DataScaling::generateFirstLevel()
 {
@@ -189,20 +267,38 @@ bool DataScaling::generateFirstLevel()
 	// Set the number of new nodes to generate
 	int numNewNodes = this->nodesPerLevel;
 
-	// Create new random nodes
-	NodeList* currentNodeList = this->nodes[0];
-	for (int count = 0; count < numNewNodes; ++count)
-	{
-		// Create a new node
-		int newId = this->nodeCount + count;	// nodeCount is total number of nodes in all previous levels
-		Node* newNode = new Node(newId);
-		currentNodeList->push_back(newNode);
+	// Set the number of clusters
+	int numClusters = numNewNodes / this->degree;
 
-		// Give the node some random words
-		for (int numWords = 0; numWords < this->wordsPerNode; ++numWords)
+	// Create the clusters
+	for (int cluster = 0; cluster < numClusters; ++cluster)
+	{
+		// Create the word list for this cluster
+		wordList clusterWords;
+		int numClusterWords = 2 * this->wordsPerNode;
+
+		for (int numWords = 0; numWords < numClusterWords; ++numWords)
 		{
-			int word = rand() % this->maxWords;
-			newNode->addWord(word);
+			// Add a random word
+			clusterWords.push_back(rand() % this->maxWords);
+		}
+
+		// Create new random nodes
+		NodeList* currentNodeList = this->nodes[0];
+		for (int count = 0; count < numNewNodes; ++count)
+		{
+			// Create a new node
+			int newId = this->nodeCount + count;	// nodeCount is total number of nodes in all previous levels
+			Node* newNode = new Node(newId);
+			currentNodeList->push_back(newNode);
+
+			// Give the node some random words
+			for (int numWords = 0; numWords < this->wordsPerNode; ++numWords)
+			{
+				int index = rand() % numClusterWords;
+				int word = clusterWords[index];
+				newNode->addWord(word);
+			}
 		}
 	}
 
@@ -212,6 +308,7 @@ bool DataScaling::generateFirstLevel()
 
 	return(true);
 }
+*/
 
 // Generate a new level of nodes
 bool DataScaling::generateNextLevel(int level)
@@ -234,8 +331,11 @@ bool DataScaling::generateNextLevel(int level)
 		Node* newNode = new Node(newId);
 		currentNodeList->push_back(newNode);
 
+		// Randomly select the degree for this node
+		int nodeDegree = (rand() % this->degree) + 1;
+
 		// For each degree (as specified on the command line)
-		for (int degree = 0; degree < this->degree; ++degree)
+		for (int degree = 0; degree < nodeDegree; ++degree)
 		{
 			// Select a random node from the previous level
 			int oldId = rand() % previousSize;
@@ -248,9 +348,10 @@ bool DataScaling::generateNextLevel(int level)
 				// Add an edge between the new node and the old node
 				newNode->addEdge(oldId);
 				oldNode->addEdge(newId);
+				this->edgeCount += 2;
 
 				// Randomly add some of the old node's words into the new node
-				int numWords = this->wordsPerNode / this->degree;
+				int numWords = this->wordsPerNode / nodeDegree;
 				newNode->addPartialWordList(oldNode, numWords);
 			}
 		}
@@ -264,10 +365,13 @@ bool DataScaling::generateNextLevel(int level)
 }
 
 // Process a block of nodes
-bool DataScaling::saveLevel(NodeList* nodeList, ofstream& nodeFile, ofstream& edgeFile, ofstream& adFile)
+bool DataScaling::saveLevel(int level, ofstream& nodeFile, ofstream& edgeFile, ofstream& adFile)
 {
+        // Get this level's list of nodes
+        NodeList* nodeList = this->nodes[level];
+
 	// Find and create edges between nodes on the same level
-	this->makeSiblingEdges(nodeList);
+	this->makeSiblingEdges(nodeList, level);
 
 	// Flush this block from memory
 	for (unsigned int i = 0; i < nodeList->size(); ++i)
@@ -295,9 +399,17 @@ bool DataScaling::saveLevel(NodeList* nodeList, ofstream& nodeFile, ofstream& ed
 }
 
 // Find and make edges between nodes on the same level
-bool DataScaling::makeSiblingEdges(NodeList* nodeList)
+bool DataScaling::makeSiblingEdges(NodeList* nodeList, int level)
 {
+        // Set the similarity threshold for an edge
+        int threshold = 5;
+        //if (level == 0)
+        //{
+	//	threshold = 1;
+	//}
+
 	// Check every possible pair of nodes
+	int count = 0;
 	for (auto itNode1 = nodeList->begin(); itNode1 != nodeList->end(); ++itNode1)
 	{
 		Node* node1 = *itNode1;
@@ -314,15 +426,21 @@ bool DataScaling::makeSiblingEdges(NodeList* nodeList)
 				// Check if they have at least one word in common
 				if (node1->isCommon(node2))
 				{
-					// Add an edge between the two nodes
-					node1->addEdge(id2);
-					node2->addEdge(id1);
+					if (++count >= threshold)
+					{
+						// Add an edge between the two nodes
+						node1->addEdge(id2);
+						node2->addEdge(id1);
+						this->edgeCount += 2;
+
+						return(true);
+					}
 				}
 			}
 		}
 	}
 
-	return(true);
+	return(false);
 }
 
 // Print the node data structure
@@ -348,3 +466,4 @@ bool DataScaling::printNodes()
 ////////////////////////////////////////////////////////////////////////////////
 }   // namespace dataScaling
 ////////////////////////////////////////////////////////////////////////////////
+
