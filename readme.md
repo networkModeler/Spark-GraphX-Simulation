@@ -40,7 +40,7 @@ Following are some noteworthy implementation decisions:
 
 - **Node-Oriented Versus Edge-Oriented**:  The nature-inspired algorithm is node-oriented.  Each butterfly must decide which one of a node's outgoing edges to select for the next leg of his flight.  On the other hand, the Spark GraphX Pregel API is edge-oriented.  In the diagram below of the Pregel API, the point to note is that in Step 1, messages are sent for each edge rather than for each node.  At no time is there visibility from a node to all its adjacent nodes:
 
-![results](./doc/Pregel.pdf?raw=true "results")
+![pregel](./doc/Pregel.png?raw=true "pregel")
 
 In order to adapt the algorithm to the Pregel API, I elected to replicate a node's features onto each of its adjacent neighbors.  This replication was done for all nodes during an initialization phase of the algorithm, and was itself implemented by its own Pregel "program".
 
