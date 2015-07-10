@@ -1,26 +1,24 @@
-//////////////////////////////////////////////////////////////////////////////////////////////
-// 
-// SIMULATOR CLASS:  driver functions for the simulation
-//
-// Implementation:
-//	Uses the Spark GraphX Pregel API.
-//	GraphX is implemented in Scala and data is predominantly immutable.
-//	The Pregel API is recommended for iterative algorithms, such as this simulation,
-//	because the API tries to manage the intermediate data and the in-memory cache.
-//
-//	A major implementation issue is that the Spark GraphX Pregel API is edge-oriented.
-//	At no point in the Pregel super-step does a vertex have visibility to all its adjacent vertices.
-//	Since this simulation is inherently vertex-oriented, this implementation replicates the data
-//	of a vertex onto each of its adjacent vertices.  This trick makes the vertex calcuations
-//	self-contained, thus making the simulation feasible on GraphX.  Obviously this increases
-//	the storage requirements, but we win big by cutting down the inter-vertex communication.
-//	For this simulation of a more or less randomly connected graph with no clean partitioning,
-//	network traffic is more of a concern than storage.
-//
-//	The replication of vertex data is performed during initialization (this project assumes
-//	a static graph), implemented as its own Pregel cycle.
-//
-////////////////////////////////////////////////////////////////////////////////////////////////
+/**
+ * SIMULATOR CLASS:  meta level functions for the simulation
+ *
+ * Implementation:
+ *	Uses the Spark GraphX Pregel API.
+ *	GraphX is implemented in Scala and data is predominantly immutable.
+ *	The Pregel API is recommended for iterative algorithms, such as this simulation,
+ *	because the API tries to manage the intermediate data and the in-memory cache.
+ *
+ *	A major implementation issue is that the Spark GraphX Pregel API is edge-oriented.
+ *	At no point in the Pregel super-step does a vertex have visibility to all adjacent vertices.
+ *	Since this simulation is inherently vertex-oriented, this implementation replicates the data
+ *	of a vertex onto each of its adjacent vertices.  This trick makes the vertex calcuations
+ *	self-contained, thus making the simulation feasible on GraphX.  Obviously this increases
+ *	the storage requirements, but we win big by cutting down the inter-vertex communication.
+ *	For this simulation of a more or less randomly connected graph with no clean partitioning,
+ *	network traffic is more of a concern than storage.
+ *
+ *	The replication of vertex data is performed during initialization (this project assumes
+ *	a static graph), implemented as its own Pregel cycle.
+ */
 
 import org.apache.spark._
 import org.apache.spark.streaming._
@@ -30,26 +28,33 @@ import java.io._
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
-// Define a class for replication Pregel messages passed between vertices
-// Sends a vertex's page data to its neighboring vertex
+/**
+ * Define a class for replication Pregel messages passed between vertices
+ * Sends a vertex's page data to its neighboring vertex
+ */
 case class ReplicateMessage(vertexId: VertexId, var pages: List[Page]) extends java.io.Serializable
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
-// Define a class for migration Pregel messages passed between vertices
-// Sends a list of ads that are migrating from the source vertex to the destination vertex
+/**
+ * Define a class for migration Pregel messages passed between vertices
+ * Sends a list of ads that are migrating from the source vertex to the destination vertex
+ */
 case class MigrateMessage(vertexId: VertexId, var ads: List[Ad]) extends java.io.Serializable
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
-// Define a class to run the simulation
+/**
+ * Define a class to run the simulation
+ */
 class Simulator() extends java.io.Serializable
 {
   // A boolean flag to enable debug statements
   var debug = true
 
   // A boolean flag to read an edgelist file rather than compute the edges
-  // Because computing the edges is expensive (N^2), only compute it once and then just reload to run the simulation
+  // Because computing the edges is expensive (N^2), only compute it once
+  // and then just reload to run the simulation
   val readEdgelistFile = true;
 
   ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -58,12 +63,11 @@ class Simulator() extends java.io.Serializable
   def createGraph(): Graph[VertexAttributes, Int] = 
   {
     // Just needed for textFile() method to load an RDD from a textfile
-    // Cannot use the global Spark context because SparkContext cannot be serialized from master to worker
+    // Can't use global Spark context because SparkContext can't be serialized from master to worker
     val sc = new SparkContext
 
     // Parse a text file with the vertex information
-    //val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/queryid_tokensid.txt")
-    val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/3K_nodes.txt")
+    val pages = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/queryid_tokensid.txt")
       .map { l =>
         val tokens = l.split("\\s+")     // split("\\s") will split on whitespace
         val id = tokens(0).trim.toLong
@@ -77,8 +81,7 @@ class Simulator() extends java.io.Serializable
     if (readEdgelistFile)
     {
       // Create a graph from an edgelist file
-      //GraphLoader.edgeListFile(sc, "hdfs://ip-172-31-4-59:9000/user/butterflies/data/saved_edges.txt")
-      GraphLoader.edgeListFile(sc, "hdfs://ip-172-31-4-59:9000/user/butterflies/data/3K_edges.txt")
+      GraphLoader.edgeListFile(sc, "hdfs://ip-172-31-4-59:9000/user/butterflies/data/saved_edges.txt")
     }
     else
     {
@@ -122,8 +125,7 @@ class Simulator() extends java.io.Serializable
     }
 
     // Parse a text file with the ad information
-    //val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/descriptionid_tokensid.txt")
-    val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/3K_ads.txt")
+    val ads = sc.textFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/descriptionid_tokensid.txt")
       .map { l =>
         val tokens = l.split("\\s+")     // split("\\s") will split on whitespace
         val id = tokens(0).trim.toLong
@@ -164,20 +166,20 @@ class Simulator() extends java.io.Serializable
   } 
 
   ////////////////////////////////////////////////////////////////////////////////////////////////
-  //
-  // REPLICATION
-  //
-  // Replicate each page's bag of words onto their adjacent neighbors
-  //
-  // Required because GraphX is edge-oriented, whereas this simulation is vertex-oriented
-  // In order for a source vertex's ads to decide which destination vertex to migrate to,
-  // we need the destination vertice's attributes replicated in the source node.
-  // With this replication, we can perform the migration calculations in the source node's vprog.
-  //
-  // Replicating the neighboring attributes is inefficient in terms of storage, but should be
-  // more efficient in terms of network traffic since the migration calculations are self contained.
-  //
-  ////////////////////////////////////////////////////////////////////////////////////////////////
+
+  /**
+   * REPLICATE
+   *
+   * Replicate each page's bag of words onto their adjacent neighbors
+   *
+   * Required because GraphX is edge-oriented, whereas this simulation is vertex-oriented
+   * In order for a source vertex's ads to decide which destination vertex to migrate to,
+   * we need the destination vertice's attributes replicated in the source node.
+   * With this replication, we can perform the migration calculations in the source node's vprog.
+   *
+   * Replicating the neighboring attributes is inefficient in terms of storage, but should be
+   * more efficient in terms of network traffic since the migration calculations are self contained.
+   */
 
   // Replicate each page's bag of words onto their adjacent neighbors
   // Use the Pregel API of GraphX because it manages the caching of intermediate data better
@@ -273,14 +275,21 @@ class Simulator() extends java.io.Serializable
   }
 
   ////////////////////////////////////////////////////////////////////////////////////////////////
-  //
-  // MIGRATION
-  //
-  // 1.  Decide which ads want to migrate to adjacent vertices
-  // 2.  Send lists of migrating ads to adjacent vertices
-  // 3.  Receive messages, add incoming ads 
-  //
-  ////////////////////////////////////////////////////////////////////////////////////////////////
+
+  /**
+   * MIGRATION
+   *
+   * 1.  Decide which ads want to migrate to adjacent vertices
+   * 2.  Send lists of migrating ads to adjacent vertices
+   * 3.  Receive messages, add incoming ads 
+   *
+   * Implementation issue:
+   *	The Pregel API only invokes sendMessages on edges adjacent to vertices that received a
+   *	a message in the previous iteration.  For this simulation, that would mean that any
+   *	vertex that did not receive any immigrating ads would not have the opportunity to emigrate
+   *	any of its resident ads.  To circumvent this behavior, we must send a dummy message to
+   *	all vertices with resident ads.
+   */
 
   // Ad migration
   // Use the Pregel API of GraphX because it manages the caching of intermediate data better
@@ -313,7 +322,8 @@ class Simulator() extends java.io.Serializable
     }
 
     // Concatenate the new arrivals into the existing ads
-    attributes.ads = (attributes.ads ++ arrivals.ads.filter(_.id >= 0)).distinct  // ++ is the concatenate operator for Scala container
+    // ++ is the concatenate operator for Scala container
+    attributes.ads = (attributes.ads ++ arrivals.ads.filter(_.id >= 0)).distinct  
 
     // Select the next vertex for each ad (may remain in this vertex)
     attributes.ads.foreach( ad => ad.scorePages(attributes.pages, id))
@@ -367,7 +377,7 @@ class Simulator() extends java.io.Serializable
       Iterator((edge.dstId, MigrateMessage(edge.dstId, leaving)))
     }
     // Pregel only invokes sendMsg on vertices that received a message on the previous round
-    // We must send a dummy message to vertices that have ads or else they'll never leave that vertex
+    // We must send a dummy message to vertices that have ads or they'll never leave that vertex
     else if (edge.dstAttr.ads.length > 0)
     {
       Iterator((edge.dstId, MigrateMessage(-1L, List.empty)))
@@ -394,7 +404,8 @@ class Simulator() extends java.io.Serializable
     }
 
     // Merge the two ad lists into a single list
-    val combined = MigrateMessage(msg1.vertexId, msg1.ads ++ msg2.ads)	// ++ is the concatenate operator for Scala containers
+    // ++ is the concatenate operator for Scala containers
+    val combined = MigrateMessage(msg1.vertexId, msg1.ads ++ msg2.ads)
 
     // Debug
     //if (debug)
@@ -429,7 +440,8 @@ class Simulator() extends java.io.Serializable
 
     // Output the nodes
     //"nodedef>name VARCHAR, color VARCHAR\n"
-    val nodeRdd = g.vertices.map(v => if(v._2.score() == 0)(v._1 + ",'0,0,255'") else (v._1 + ",'255,0,0'"))
+    val nodeRdd = g.vertices.map(
+        v => if(v._2.score() == 0)(v._1 + ",'0,0,255'") else (v._1 + ",'255,0,0'"))
     nodeRdd.saveAsTextFile("hdfs://ip-172-31-4-59:9000/user/butterflies/data/nodes.gdf")
 
     // Output the edges

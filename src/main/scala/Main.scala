@@ -1,29 +1,33 @@
-//////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////
-//
-// SIMULATOR OF ADS MIGRATING ALONG A SIMILARITY GRAPH OF PAGES
-//
-// Model:
-// 	An Ad is modeled as a bag of words:  Ad(adId, List[String])
-// 	A Page is modeled as a bag of words and a list of ads: Page(vertexId, List[String], List[Ad])
-// 	Ads move from page to page,  with randomness proportional to the similarity between the ad and the adjacent pages
-// 	For now, the similarity metric is simply the number of words in common (page-to-page, ad-to-page)
-//
-// Graph structure:
-//      There is a vertex for each page
-//      There is an edge between any two vertices with a similarity above a certain threshold
-//
-// Simulator operations:
-//	Create graph
-//	Replicate data
-//	Insert ads
-//	Migrate ads
-//	Output graph
-//
-// Implementation:
-//	Implemented with Spark GraphX, Pregel API
-//
-////////////////////////////////////////////////////////////////////////////////////////////////
+/**
+ * SIMULATOR OF ADS MIGRATING ALONG A SIMILARITY GRAPH OF PAGES
+ *
+ * Model:
+ * 	An Ad is modeled as a list of words:
+ *	    Ad(adId, List[String])
+ *
+ * 	A Page is modeled as a list of words and a list of ads:
+ *	    Page(vertexId, List[String], List[Ad])
+ *
+ * 	Ads move from page to page, randomly in proportion to the similarity between the ad and the
+ *	    adjacent pages
+ *
+ * 	For now, the similarity metric is simply the number of words in common 
+ *	    (page-to-page, ad-to-page)
+ *
+ * Graph structure:
+ *      There is a vertex for each page
+ *      There is an edge between any two vertices with a similarity above a certain threshold
+ *
+ * Simulator operations:
+ *	Create graph
+ *	Replicate data
+ *	Insert ads
+ *	Migrate ads
+ *	Output graph
+ *
+ * Implementation:
+ *	Implemented with Spark GraphX, Pregel API
+ */
 
 import org.apache.spark._
 import org.apache.spark.streaming._
@@ -31,7 +35,9 @@ import org.apache.spark.graphx._
 import org.apache.spark.rdd.RDD
 import java.io._
 
-// Scala object to hold the main static function
+/**
+ * Scala object to hold the main static function
+ */
 object Main extends java.io.Serializable
 {
   def main(args: Array[String])

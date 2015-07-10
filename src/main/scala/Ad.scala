@@ -1,18 +1,16 @@
-////////////////////////////////////////////////////////////////////////////////////////////////
-//
-// AD CLASS: class for a single ad
-//
-// Next page selection:
-//	The scorePages method is called from the vertex program of the Pregel super step.
-//	The calling vertex also passes in a list of its adjacent neighbors.
-//	The ad then scores itself against each of the vertices, and remembers its selection.
-//	The ad's selection is then used during the message sending step of the Pregel super step.
-//
-//	The selection is made randomly, in proportion to the similarity metric for each possible page.
-//	This biases the selection towards better pages, but does not exclude exploring other pages,
-//	allowing the ad to escape local minima.
-//
-////////////////////////////////////////////////////////////////////////////////////////////////
+/**
+ * AD CLASS: class for a single ad
+ *
+ * Next page selection:
+ *	The scorePages method is called from the vertex program of the Pregel super step.
+ *	The calling vertex also passes in a list of its adjacent neighbors.
+ *	The ad then scores itself against each of the vertices, and remembers its selection.
+ *	The ad's selection is then used during the message sending step of the Pregel super step.
+ *
+ *	The selection is made randomly, in proportion to the similarity metric for each page.
+ *	This biases the selection towards better pages, but does not exclude exploring other pages,
+ *	allowing the ad to escape local minima.
+ */
 
 import org.apache.spark._
 import org.apache.spark.streaming._
@@ -21,7 +19,15 @@ import org.apache.spark.rdd.RDD
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
-// Define a class for an ad
+/**
+ * Define a class for an ad
+ *
+ * @param id: unique identifier for this ad
+ * @param tokens: list of words in this ad's description
+ * @param next: the vertex to migrate to next, used as scratchpad to communicate between the
+ *		vertexProgram and sendMessage steps of a super-step
+ * @param score: the similarity score between this ad and the next vertex, used for debug only
+ */
 case class Ad(id: Long, tokens: List[String], var next: VertexId, var score: Int) extends java.io.Serializable
 {
   val debug = true
@@ -35,6 +41,9 @@ case class Ad(id: Long, tokens: List[String], var next: VertexId, var score: Int
 
   ////////////////////////////////////////////////////////////////////////////////////////////////
 
+  /**
+   * Select a page from the given list of unscored pages
+   */
   def scorePages(pageList: List[Page], currentPage: VertexId) =
   {
     // Score this ad with each page in the given list
@@ -66,7 +75,9 @@ case class Ad(id: Long, tokens: List[String], var next: VertexId, var score: Int
 
   ////////////////////////////////////////////////////////////////////////////////////////////////
 
-  // Select a page, randomly in proportion to the page's score
+  /**
+   * Select a page from the given list of scored pages, randomly in proportion to the page's score
+   */
   def selectWeightedRandom(pageList: List[Page], currentPage: VertexId): VertexId =
   {
     // Check if there are no neighboring vertices
